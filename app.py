@@ -97,16 +97,15 @@ with col1:
             
             # 1. Handle DICOM
             if file_ext.endswith(".dcm"):
-                with open("temp.dcm", "wb") as tmp:
-                    tmp.write(f.read())
-                hu_data, _ = MedicalImageProcessor.load_dicom_slice("temp.dcm")
+                hu_data, _ = MedicalImageProcessor.load_dicom_slice(io.BytesIO(f.read()))
                 rgb_slice = MedicalImageProcessor.process_ct_rgb(hu_data)
                 resized = MedicalImageProcessor.resize_for_model(rgb_slice)
                 st.session_state.processed_images.append(Image.fromarray(resized))
-            
+
             # 2. Handle NIfTI
             elif file_ext.endswith(".nii") or file_ext.endswith(".nii.gz"):
-                slices = MedicalImageProcessor.extract_nifti_slices(f.read())
+                suffix = ".nii.gz" if file_ext.endswith(".nii.gz") else ".nii"
+                slices = MedicalImageProcessor.extract_nifti_slices(f.read(), suffix=suffix)
                 st.session_state.processed_images.extend(slices)
             
             # 3. Handle Standard Image Formats

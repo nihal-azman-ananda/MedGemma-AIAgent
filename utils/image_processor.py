@@ -4,6 +4,8 @@ import nibabel as nib
 from PIL import Image
 import cv2
 import io
+import os
+import tempfile
 
 class MedicalImageProcessor:
     @staticmethod
@@ -31,9 +33,12 @@ class MedicalImageProcessor:
         return rgb
 
     @classmethod
-    def load_dicom_slice(cls, file_path):
-        """Load a single DICOM slice and apply Rescale Slope/Intercept."""
-        ds = pydicom.dcmread(file_path)
+    def load_dicom_slice(cls, file_source):
+        """Load a single DICOM slice and apply Rescale Slope/Intercept.
+
+        file_source may be a path or a file-like object (e.g. io.BytesIO).
+        """
+        ds = pydicom.dcmread(file_source)
         img = ds.pixel_array.astype(float)
         
         # Apply rescale slope and intercept to get Hounsfield Units (HU)
@@ -68,15 +73,32 @@ class MedicalImageProcessor:
             print(f"Error processing image: {e}")
             return None
 
+    @staticmethod
+    def select_slices(volume, num_slices=3):
+        """Select evenly-spaced 2D slices from a 3D volume along the axial (last) axis."""
+        if volume.ndim == 2:
+            return [volume]
+
+        total = volume.shape[-1]
+        if total <= num_slices:
+            indices = range(total)
+        else:
+            # Sample from the central 50% of the volume, where anatomy is most informative
+            indices = np.linspace(total * 0.25, total * 0.75, num_slices).astype(int)
+
+        return [volume[..., i] for i in indices]
+
     @classmethod
-    def extract_nifti_slices(cls, file_content, num_slices=3):
+    def extract_nifti_slices(cls, file_content, num_slices=3, suffix=".nii"):
         """Extract RGB slices from a NIfTI volume for MedGemma."""
+        tmp_path = None
         try:
-            # We need to save to a temp file because nibabel expects a path
-            with open("temp.nii", "wb") as f:
-                f.write(file_content)
-            data, header = cls.load_nifti_volume("temp.nii")
-            
+            # nibabel requires a file path; the suffix lets it detect gzip compression
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(file_content)
+                tmp_path = tmp.name
+            data, header = cls.load_nifti_volume(tmp_path)
+
             # Select representative slices
             raw_slices = cls.select_slices(data, num_slices)
             processed_slices = []
@@ -89,3 +111,6 @@ class MedicalImageProcessor:
         except Exception as e:
             print(f"Error processing NIfTI: {e}")
             return []
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)

@@ -9,13 +9,18 @@ class MedGemmaHandler:
         if not cls._instance:
             cls._instance = super(MedGemmaHandler, cls).__new__(cls)
             cls._instance.initialized = False
+            cls._instance.model_id = None
+            cls._instance._hf_token = None
         return cls._instance
 
     def initialize(self, model_id="google/medgemma-1.5-4b-it", use_quantization=True, hf_token=None):
-        if self.initialized:
+        # Reuse the loaded model only if both the model and token are unchanged;
+        # a new token (e.g. switching HF accounts) forces a reload.
+        if self.initialized and self.model_id == model_id and self._hf_token == hf_token:
             return
-        
+
         self.model_id = model_id
+        self._hf_token = hf_token
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
         if hf_token:
@@ -83,7 +88,14 @@ class MedGemmaHandler:
             tokenize=True,
             return_dict=True,
             return_tensors="pt"
-        ).to(self.model.device, dtype=torch.bfloat16 if self.device == "cuda" else torch.float32)
+        )
+
+        # On CUDA the (quantized) model computes in bfloat16, so float inputs must match.
+        # On CPU the model stays float32, so only move to device without recasting.
+        if self.device == "cuda":
+            inputs = inputs.to(self.model.device, dtype=torch.bfloat16)
+        else:
+            inputs = inputs.to(self.model.device)
 
         input_len = inputs["input_ids"].shape[-1]
 
