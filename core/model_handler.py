@@ -1,6 +1,20 @@
 import torch
 from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig
 import os
+import json
+import re
+
+STRUCTURED_PROMPT = (
+    "You are a radiology assistant. Analyze the provided medical scan(s) and respond with "
+    "ONLY a single JSON object using exactly this schema:\n"
+    '{\n'
+    '  "findings": "detailed observation of structures, densities, and abnormalities",\n'
+    '  "impression": "concise diagnostic summary",\n'
+    '  "recommendations": "suggested follow-up or next steps",\n'
+    '  "confidence": "High, Moderate, or Low"\n'
+    '}\n'
+    "Do not include any text, markdown, or commentary outside the JSON object."
+)
 
 class MedGemmaHandler:
     _instance = None
@@ -27,8 +41,8 @@ class MedGemmaHandler:
             os.environ["HF_TOKEN"] = hf_token
 
         try:
-            # 1. Load Processor
-            self.processor = AutoProcessor.from_pretrained(self.model_id)
+            # 1. Load Processor (pass the token explicitly so gated access is authenticated)
+            self.processor = AutoProcessor.from_pretrained(self.model_id, token=hf_token)
 
             # 2. Configure Quantization if on CUDA
             bnb_config = None
@@ -45,7 +59,8 @@ class MedGemmaHandler:
                 self.model_id,
                 torch_dtype=torch.bfloat16 if self.device == "cuda" else torch.float32,
                 quantization_config=bnb_config,
-                device_map="auto" if self.device == "cuda" else None
+                device_map="auto" if self.device == "cuda" else None,
+                token=hf_token
             )
             
             if self.device == "cpu":
@@ -58,10 +73,11 @@ class MedGemmaHandler:
             self.initialized = False
             raise e
 
-    def analyze(self, images, prompt="Analyze this medical scan and list key findings.", max_new_tokens=1024):
+    def analyze(self, images, prompt=STRUCTURED_PROMPT, max_new_tokens=1024):
         """
         Inference call for MedGemma.
         'images' can be a single PIL Image or a list of PIL Images.
+        Returns the raw model string; use parse_report() to structure it.
         """
         if not self.initialized:
             return "Model not initialized."
@@ -111,5 +127,43 @@ class MedGemmaHandler:
         return decoded
 
     def mock_analyze(self, scan_type="CT"):
-        """Fallback for testing UI without model weights."""
-        return f"### AI Analysis Report ({scan_type})\n\n**Findings:**\n- No significant abnormalities detected in the immediate viewing area.\n- Spatial alignment looks normal.\n- Tissue density indicates consistent HU values.\n\n**Clinical Recommendation:**\nCorrelation with patient history is suggested. This is a mock analysis for UI demonstration."
+        """Fallback for testing UI without model weights. Returns a JSON report string."""
+        return json.dumps({
+            "findings": (
+                "No significant abnormalities detected in the immediate viewing area. "
+                "Spatial alignment appears normal and tissue density indicates consistent HU values."
+            ),
+            "impression": f"Unremarkable {scan_type} study. No acute findings identified.",
+            "recommendations": (
+                "Correlation with patient history is suggested. "
+                "No immediate follow-up imaging required. This is a mock analysis for UI demonstration."
+            ),
+            "confidence": "Moderate",
+        })
+
+    @staticmethod
+    def parse_report(text):
+        """Parse a model response into a structured report dict, with a safe fallback.
+
+        Returns a dict with keys: findings, impression, recommendations, confidence.
+        If the response is not valid JSON, the raw text is preserved under 'findings'.
+        """
+        result = {"findings": "", "impression": "", "recommendations": "", "confidence": "N/A"}
+        if not text:
+            return result
+
+        # Locate the first JSON object in the response (tolerates code fences / stray text)
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group(0))
+                for key in result:
+                    if data.get(key) is not None:
+                        result[key] = str(data[key]).strip()
+                return result
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # Fallback: nothing parseable, so surface the raw text rather than losing it
+        result["findings"] = text.strip()
+        return result

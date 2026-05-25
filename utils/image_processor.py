@@ -45,8 +45,31 @@ class MedicalImageProcessor:
         rescale_slope = getattr(ds, 'RescaleSlope', 1)
         rescale_intercept = getattr(ds, 'RescaleIntercept', 0)
         img = img * rescale_slope + rescale_intercept
-        
+
         return img, ds
+
+    @staticmethod
+    def extract_dicom_metadata(ds):
+        """Extract non-identifying study metadata for display.
+
+        Deliberately excludes patient identifiers (name, ID, DOB) to keep the panel anonymized.
+        """
+        fields = {
+            "Modality": "Modality",
+            "Study Date": "StudyDate",
+            "Body Part": "BodyPartExamined",
+            "Manufacturer": "Manufacturer",
+            "Slice Thickness": "SliceThickness",
+            "KVP": "KVP",
+            "Rows": "Rows",
+            "Columns": "Columns",
+        }
+        meta = {}
+        for label, attr in fields.items():
+            value = getattr(ds, attr, None)
+            if value not in (None, ""):
+                meta[label] = str(value)
+        return meta
 
     @classmethod
     def load_nifti_volume(cls, file_path):
