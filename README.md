@@ -6,6 +6,14 @@ A locally-hosted medical imaging analysis platform powered by **Google MedGemma 
 
 ---
 
+## Demo
+
+**App — structured findings with confidence badge and CT window/level controls:**
+
+![MedGemma Dashboard](working_ss.png)
+
+---
+
 ## Features
 
 - **Local inference** — runs entirely on your machine, no external API calls
